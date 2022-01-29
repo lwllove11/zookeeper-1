@@ -159,26 +159,38 @@ public class QuorumPeerMain {
             throw new IOException("Cannot boot MetricsProvider " + config.getMetricsProviderClassName(), error);
         }
         try {
+            // 数据采集指标
             ServerMetrics.metricsProviderInitialized(metricsProvider);
             ProviderRegistry.initialize();
+            /*
+             * ServerCnxnFactory是Zookeeper中的重要组件,负责处理客户端与服务器的连接.主要有两个实现,
+             * 一个是NIOServerCnxnFactory,使用Java原生NIO处理网络IO事件;
+             * 另一个是NettyServerCnxnFactory,使用Netty处理网络IO事件.作为处理客户端连接的组件,其会启动若干线程监听客户端连接端口(即默认的9876端口)
+             */
             ServerCnxnFactory cnxnFactory = null;
             ServerCnxnFactory secureCnxnFactory = null;
 
             if (config.getClientPortAddress() != null) {
+                // 创建CnxnFactory，负责处理客户端与服务器的连接，默认是NIOServerCnxnFactory，可以通过系统配置zookeeper.serverCnxnFactory指定
                 cnxnFactory = ServerCnxnFactory.createFactory();
                 cnxnFactory.configure(config.getClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), false);
             }
 
             if (config.getSecureClientPortAddress() != null) {
+                // 创建secureCnxnFactory，负责处理客户端与服务器的连接，默认是NIOServerCnxnFactory，可以通过系统配置zookeeper.serverCnxnFactory指定
                 secureCnxnFactory = ServerCnxnFactory.createFactory();
                 secureCnxnFactory.configure(config.getSecureClientPortAddress(), config.getMaxClientCnxns(), config.getClientPortListenBacklog(), true);
             }
 
+            // 创建QuorumPeer,并根据配置为属性赋值。
+            // QuorumPeer是Zookeeper集群的核心类，Quorum是集群模式下特有的对象，是Zookeeper服务器实例的托管者，
+            // 从集群层面来看QuorumPeer代表了Zookeeper集群中一台服务器，在运行期间它会不断检查当前服务器实例运行的状态。然后根据情况进行Leader选举。
             quorumPeer = getQuorumPeer();
+            // 创建Zookeeper数据管理器FileTxnSnapLog
             quorumPeer.setTxnFactory(new FileTxnSnapLog(config.getDataLogDir(), config.getDataDir()));
             quorumPeer.enableLocalSessions(config.areLocalSessionsEnabled());
             quorumPeer.enableLocalSessionsUpgrading(config.isLocalSessionsUpgradingEnabled());
-            //quorumPeer.setQuorumPeers(config.getAllMembers());
+            // quorumPeer.setQuorumPeers(config.getAllMembers());
             quorumPeer.setElectionType(config.getElectionAlg());
             quorumPeer.setMyid(config.getServerId());
             quorumPeer.setTickTime(config.getTickTime());
@@ -190,11 +202,13 @@ public class QuorumPeerMain {
             quorumPeer.setObserverMasterPort(config.getObserverMasterPort());
             quorumPeer.setConfigFileName(config.getConfigFilename());
             quorumPeer.setClientPortListenBacklog(config.getClientPortListenBacklog());
+            // 创建内存数据库ZKDatabase
             quorumPeer.setZKDatabase(new ZKDatabase(quorumPeer.getTxnFactory()));
             quorumPeer.setQuorumVerifier(config.getQuorumVerifier(), false);
             if (config.getLastSeenQuorumVerifier() != null) {
                 quorumPeer.setLastSeenQuorumVerifier(config.getLastSeenQuorumVerifier(), false);
             }
+            // 初始化内存数据库ZKDatabase
             quorumPeer.initConfigInZKDatabase();
             quorumPeer.setCnxnFactory(cnxnFactory);
             quorumPeer.setSecureCnxnFactory(secureCnxnFactory);
@@ -220,12 +234,13 @@ public class QuorumPeerMain {
                 quorumPeer.setQuorumLearnerLoginContext(config.quorumLearnerLoginContext);
             }
             quorumPeer.setQuorumCnxnThreadsSize(config.quorumCnxnThreadsSize);
+            // 初始化QuorumPeer
             quorumPeer.initialize();
-
+            // 设置JVM监控配置
             if (config.jvmPauseMonitorToRun) {
                 quorumPeer.setJvmPauseMonitor(new JvmPauseMonitor(config));
             }
-
+            // 启动QuorumPeer
             quorumPeer.start();
             ZKAuditProvider.addZKStartStopAuditLog();
             quorumPeer.join();

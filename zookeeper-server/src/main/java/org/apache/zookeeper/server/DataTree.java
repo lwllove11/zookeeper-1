@@ -693,7 +693,9 @@ public class DataTree {
             throw new KeeperException.NoNodeException();
         }
         synchronized (n) {
+            // 将 stat 信息放到 stat 变量中
             n.copyStat(stat);
+            // 如果设置了监听，则注册监听， dataWatches 负责所有的监听管理
             if (watcher != null) {
                 dataWatches.addWatch(path, watcher);
             }

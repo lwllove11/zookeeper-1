@@ -2010,19 +2010,21 @@ public class ZooKeeper implements AutoCloseable {
         PathUtils.validatePath(clientPath);
 
         // the watch contains the un-chroot path
+        // 通过 DataWatchRegistration 进行监听注册
         WatchRegistration wcb = null;
         if (watcher != null) {
             wcb = new DataWatchRegistration(watcher, clientPath);
         }
 
         final String serverPath = prependChroot(clientPath);
-
+        // 组装 request, response 传给 ClientCnxn
         RequestHeader h = new RequestHeader();
         h.setType(ZooDefs.OpCode.getData);
         GetDataRequest request = new GetDataRequest();
         request.setPath(serverPath);
         request.setWatch(watcher != null);
         GetDataResponse response = new GetDataResponse();
+        // 只是加入其发送队列中，即返回
         cnxn.queuePacket(h, new ReplyHeader(), request, response, cb, clientPath, serverPath, ctx, wcb);
     }
 
@@ -2034,6 +2036,8 @@ public class ZooKeeper implements AutoCloseable {
      * @see #getData(String, boolean, Stat)
      */
     public void getData(String path, boolean watch, DataCallback cb, Object ctx) {
+        // 通过传入是否监听的标识位来决定监听，而 watcher 则使用 watchManager.defaultWatcher
+        // 即在构造 ZooKeeper 实例时传入的 watcher
         getData(path, getDefaultWatcher(watch), cb, ctx);
     }
 

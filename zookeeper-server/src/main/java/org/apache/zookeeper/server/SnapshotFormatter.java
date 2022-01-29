@@ -69,6 +69,7 @@ public class SnapshotFormatter {
                 break;
             }
         }
+        snapshotFile = "G:\\tmp\\zk1\\data\\version-2\\log.100000001";
         if (args.length != i || snapshotFile == null) {
             System.err.println("USAGE: SnapshotFormatter [-d|-json] snapshot_file");
             System.err.println("       -d dump the data for each znode");

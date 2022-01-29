@@ -736,6 +736,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
      * Whether or not to listen on all IPs for the two quorum ports
      * (broadcast and fast leader election).
      */
+    // 是否监听所有IP上的两个端口
     protected boolean quorumListenOnAllIPs = false;
 
     /**
@@ -1127,16 +1128,24 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         if (!getView().containsKey(myid)) {
             throw new RuntimeException("My id " + myid + " not in the peer list");
         }
+        // zkServer中有一个内存数据库对象ZKDatabase， zkServer在启动时需要将已被持久化的数据加载进内存中，也就是加载至ZKDatabase。
         loadDataBase();
+        // 这一步会开启一个线程来接收客户端请求，但是需要注意，这一步执行完后虽然成功开启了一个线程，并且也可以接收客户端线程，
+        // 但是因为现在zkServer还没有经过初始化，实际上把请求拒绝掉，直到zkServer初始化完成才能正常的接收请求。
+        // 开启端口监听
         startServerCnxnFactory();
         try {
+            // 管理线程开启
             adminServer.start();
         } catch (AdminServerException e) {
             LOG.warn("Problem starting AdminServer", e);
             System.out.println(e);
         }
+        // 这个方法并没有真正的开始领导选举，而是进行一些初始化。
         startLeaderElection();
+        // 开启jvm-gc的监控，仅用sleep进行日志打印处理
         startJvmPauseMonitor();
+        // 启动线程，执行run()方法的逻辑包括进行领导者选举、zkServer初始化。
         super.start();
     }
 
@@ -1201,6 +1210,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
     }
     public synchronized void startLeaderElection() {
         try {
+            // 服务器状态还是LOOKING，初始化选票
             if (getPeerState() == ServerState.LOOKING) {
                 currentVote = new Vote(myid, getLastLoggedZxid(), getCurrentEpoch());
             }
@@ -1210,6 +1220,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
             throw re;
         }
 
+        // 初始化选举算法
         this.electionAlg = createElectionAlgorithm(electionType);
     }
 
@@ -1330,14 +1341,17 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
         case 2:
             throw new UnsupportedOperationException("Election Algorithm 2 is not supported.");
         case 3:
+            // 初始化传输层管理器
             QuorumCnxManager qcm = createCnxnManager();
             QuorumCnxManager oldQcm = qcmRef.getAndSet(qcm);
             if (oldQcm != null) {
                 LOG.warn("Clobbering already-set QuorumCnxManager (restarting leader election?)");
                 oldQcm.halt();
             }
+            // zk节点网络通信的组件,开启选票监听
             QuorumCnxManager.Listener listener = qcm.listener;
             if (listener != null) {
+                // 启动一个listener监听，用于监听其他机器发送过来的请求
                 listener.start();
                 FastLeaderElection fle = new FastLeaderElection(this, qcm);
                 fle.start();
@@ -1385,6 +1399,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
 
     @Override
     public void run() {
+        // 设置zk线程名
         updateThreadName();
 
         LOG.debug("Starting quorum peer");
@@ -1429,7 +1444,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                 case LOOKING:
                     LOG.info("LOOKING");
                     ServerMetrics.getMetrics().LOOKING_COUNT.add(1);
-
+                    // 开启只读模式
                     if (Boolean.getBoolean("readonlymode.enabled")) {
                         LOG.info("Attempting to start ReadOnlyZooKeeperServer");
 
@@ -1464,6 +1479,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                                 shuttingDownLE = false;
                                 startLeaderElection();
                             }
+                            // 设置当前选票
                             setCurrentVote(makeLEStrategy().lookForLeader());
                         } catch (Exception e) {
                             LOG.warn("Unexpected exception", e);
@@ -1475,6 +1491,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                             roZk.shutdown();
                         }
                     } else {
+                        // 开启领导者选举
                         try {
                             reconfigFlagClear();
                             if (shuttingDownLE) {
@@ -1488,6 +1505,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                // 初始化为观察者
                 case OBSERVING:
                     try {
                         LOG.info("OBSERVING");
@@ -1507,6 +1525,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         }
                     }
                     break;
+                // 初始化为跟随者
                 case FOLLOWING:
                     try {
                         LOG.info("FOLLOWING");
@@ -1520,6 +1539,7 @@ public class QuorumPeer extends ZooKeeperThread implements QuorumStats.Provider 
                         updateServerState();
                     }
                     break;
+                // 初始化为领导者
                 case LEADING:
                     LOG.info("LEADING");
                     try {

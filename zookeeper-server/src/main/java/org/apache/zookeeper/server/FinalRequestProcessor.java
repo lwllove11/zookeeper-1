@@ -155,6 +155,7 @@ public class FinalRequestProcessor implements RequestProcessor {
             ZooTrace.logRequest(LOG, traceMask, 'E', request, "");
         }
         ProcessTxnResult rc = null;
+        // DB 入库
         if (!request.isThrottled()) {
           rc = applyRequest(request);
         }
@@ -378,12 +379,15 @@ public class FinalRequestProcessor implements RequestProcessor {
             case OpCode.getData: {
                 lastOp = "GETD";
                 GetDataRequest getDataRequest = new GetDataRequest();
+                // 解析客户端数据到 GetDataRequest 中，其中包含了 watch 状态值
                 ByteBufferInputStream.byteBuffer2Record(request.request, getDataRequest);
                 path = getDataRequest.getPath();
+                // 由 handleGetDataRequest 处理 watch 状态
                 rsp = handleGetDataRequest(getDataRequest, cnxn, request.authInfo);
                 requestPathMetricsCollector.registerRequest(request.type, path);
                 break;
             }
+            // setWatches 是另一种注册 watch 的方式
             case OpCode.setWatches: {
                 lastOp = "SETW";
                 SetWatches setWatches = new SetWatches();
@@ -602,11 +606,12 @@ public class FinalRequestProcessor implements RequestProcessor {
         }
 
         ReplyHeader hdr = new ReplyHeader(request.cxid, lastZxid, err.intValue());
-
+        // 更新状态
         updateStats(request, lastOp, lastZxid);
 
         try {
             if (path == null || rsp == null) {
+                // 返回数据给客户端
                 responseSize = cnxn.sendResponse(hdr, rsp, "response");
             } else {
                 int opCode = request.type;
@@ -658,12 +663,15 @@ public class FinalRequestProcessor implements RequestProcessor {
     private Record handleGetDataRequest(Record request, ServerCnxn cnxn, List<Id> authInfo) throws KeeperException, IOException {
         GetDataRequest getDataRequest = (GetDataRequest) request;
         String path = getDataRequest.getPath();
+        // 无权限地获取 dataNode 节点信息，用于后续判断
         DataNode n = zks.getZKDatabase().getNode(path);
         if (n == null) {
             throw new KeeperException.NoNodeException();
         }
+        // 检查权限
         zks.checkACL(cnxn, zks.getZKDatabase().aclForNode(n), ZooDefs.Perms.READ, authInfo, path, null);
         Stat stat = new Stat();
+        // 获取节点数据，如果需要进行watch监听，则把当前的连接信息传递过去，此处为 NIOServerCnxn
         byte[] b = zks.getZKDatabase().getData(path, stat, getDataRequest.getWatch() ? cnxn : null);
         return new GetDataResponse(b, stat);
     }

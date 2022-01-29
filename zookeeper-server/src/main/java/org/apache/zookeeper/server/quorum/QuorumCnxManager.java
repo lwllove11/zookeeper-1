@@ -157,6 +157,7 @@ public class QuorumCnxManager {
     /*
      * Mapping from Peer to Thread number
      */
+    // 发送选票的SendWorker
     final ConcurrentHashMap<Long, SendWorker> senderWorkerMap;
     final ConcurrentHashMap<Long, BlockingQueue<ByteBuffer>> queueSendMap;
     final ConcurrentHashMap<Long, ByteBuffer> lastMessageSent;
@@ -164,6 +165,7 @@ public class QuorumCnxManager {
     /*
      * Reception queue
      */
+    // 接收选票的队列
     public final BlockingQueue<Message> recvQueue;
 
     /*
@@ -311,10 +313,12 @@ public class QuorumCnxManager {
     public QuorumCnxManager(QuorumPeer self, final long mySid, Map<Long, QuorumPeer.QuorumServer> view,
         QuorumAuthServer authServer, QuorumAuthLearner authLearner, int socketTimeout, boolean listenOnAllIPs,
         int quorumCnxnThreadsSize, boolean quorumSaslAuthEnabled) {
-
+        // 创建一个recvQueue，返回响应的数据会放到这个队列里面，肯定有其他地方会取出这个队列里面的数据，然后进行处理的
         this.recvQueue = new CircularBlockingQueue<>(RECV_CAPACITY);
+        // 发送队列的一个map， key: myid, value: 要发送的数据集合
         this.queueSendMap = new ConcurrentHashMap<>();
         this.senderWorkerMap = new ConcurrentHashMap<>();
+        // 最新发送出的数据集合
         this.lastMessageSent = new ConcurrentHashMap<>();
 
         String cnxToValue = System.getProperty("zookeeper.cnxTimeout");
@@ -335,6 +339,7 @@ public class QuorumCnxManager {
         initializeConnectionExecutor(mySid, quorumCnxnThreadsSize);
 
         // Starts listener thread that waits for connection requests
+        // 开启监听器监听socket
         listener = new Listener();
         listener.setName("QuorumPeerListener");
     }
@@ -510,6 +515,7 @@ public class QuorumCnxManager {
         }
 
         // If lost the challenge, then drop the new connection
+        // 不允许和比自己sid大的机器建立连接
         if (sid > self.getId()) {
             LOG.info("Have smaller server identifier, so dropping the connection: (myId:{} --> sid:{})", self.getId(), sid);
             closeSocket(sock);
@@ -663,16 +669,18 @@ public class QuorumCnxManager {
             LOG.warn("We got a connection request from a server with our own ID. "
                      + "This should be either a configuration error, or a bug.");
         } else { // Otherwise start worker threads to receive data.
+            // 其他zk的sid 大于自身sid，启动收发线程接收和发送数据
             SendWorker sw = new SendWorker(sock, sid);
             RecvWorker rw = new RecvWorker(sock, din, sid, sw);
+            // 设置接收器
             sw.setRecv(rw);
 
             SendWorker vsw = senderWorkerMap.get(sid);
-
+            // 存在旧的连接到其他zk的连接则关闭
             if (vsw != null) {
                 vsw.finish();
             }
-
+            // 将新的发送线程保存到map中，sid :其他zk的id; sw : 本zk连接其他zk的发送器
             senderWorkerMap.put(sid, sw);
 
             queueSendMap.putIfAbsent(sid, new CircularBlockingQueue<>(SEND_CAPACITY));
@@ -700,8 +708,11 @@ public class QuorumCnxManager {
             /*
              * Start a new connection if doesn't have one already.
              */
+            // 从queueSendMap中取出对应sid的zk的发送队列
             BlockingQueue<ByteBuffer> bq = queueSendMap.computeIfAbsent(sid, serverId -> new CircularBlockingQueue<>(SEND_CAPACITY));
+            // 将发送数据入队
             addToSendQueue(bq, b);
+            //
             connectOne(sid);
         }
     }
@@ -918,6 +929,7 @@ public class QuorumCnxManager {
 
             // maximum retry count while trying to bind to election port
             // see ZOOKEEPER-3320 for more details
+            // 设置zk选举重试次数
             final Integer maxRetry = Integer.getInteger(ELECTION_PORT_BIND_RETRY,
                     DEFAULT_PORT_BIND_MAX_RETRY);
             if (maxRetry >= 0) {

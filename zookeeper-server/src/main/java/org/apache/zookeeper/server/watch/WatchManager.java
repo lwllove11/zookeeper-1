@@ -69,11 +69,14 @@ public class WatchManager implements IWatchManager {
 
     @Override
     public synchronized boolean addWatch(String path, Watcher watcher, WatcherMode watcherMode) {
+        // 各个地方都有检测是否连接有效的设置，避免数据不一致
         if (isDeadWatcher(watcher)) {
             LOG.debug("Ignoring addWatch with closed cnxn");
             return false;
         }
-
+        // 此处为同步调用，所以可以请放心使用 HashMap 作为watcher的容器
+        // watchTable = new HashMap<String, Set<Watcher>>();
+        // 每一个 path 下，可以设置 n 个watcher, 所以使用 Set 数据结构保存 watcher
         Set<Watcher> list = watchTable.get(path);
         if (list == null) {
             // don't waste memory if there are few watches on a node
@@ -83,7 +86,7 @@ public class WatchManager implements IWatchManager {
             watchTable.put(path, list);
         }
         list.add(watcher);
-
+        // 针对每个链接，可以设置很多 path 的监听
         Set<String> paths = watch2Paths.get(watcher);
         if (paths == null) {
             // cnxns typically have many watches, so use default cap here

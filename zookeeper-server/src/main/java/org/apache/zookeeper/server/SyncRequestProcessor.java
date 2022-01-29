@@ -178,6 +178,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                 ServerMetrics.getMetrics().SYNC_PROCESSOR_QUEUE_TIME.add(startProcessTime - si.syncQueueStartTime);
 
                 // track the number of records written to the log
+                // 添加到 事务日志中
                 if (!si.isThrottled() && zks.getZKDatabase().append(si)) {
                     if (shouldSnapshot()) {
                         resetSnapshotStats();
@@ -213,6 +214,7 @@ public class SyncRequestProcessor extends ZooKeeperCriticalThread implements Req
                     continue;
                 }
                 toFlush.add(si);
+                // 刷写数据到磁盘，完成 Sync 操作
                 if (shouldFlush()) {
                     flush();
                 }

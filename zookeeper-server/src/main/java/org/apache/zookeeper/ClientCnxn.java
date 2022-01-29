@@ -1674,9 +1674,12 @@ public class ClientCnxn {
                 if (h.getType() == OpCode.closeSession) {
                     closing = true;
                 }
+                // 添加到队列
                 outgoingQueue.add(packet);
             }
         }
+        // 唤醒发送线程，我们可以认为此处即是数据已发送往服务端
+        // 事实上 SendThread 会一直循环处理数据发送、心跳等任务
         sendThread.getClientCnxnSocket().packetAdded();
         return packet;
     }

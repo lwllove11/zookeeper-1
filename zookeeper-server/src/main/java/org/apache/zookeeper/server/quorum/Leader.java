@@ -577,6 +577,7 @@ public class Leader extends LearnerMaster {
      * @throws InterruptedException
      */
     void lead() throws IOException, InterruptedException {
+        // 记住本次leader选举的时间开销
         self.end_fle = Time.currentElapsedTime();
         long electionTimeTaken = self.end_fle - self.start_fle;
         self.setElectionTimeTaken(electionTimeTaken);
@@ -584,21 +585,23 @@ public class Leader extends LearnerMaster {
         LOG.info("LEADING - LEADER ELECTION TOOK - {} {}", electionTimeTaken, QuorumPeer.FLE_TIME_UNIT);
         self.start_fle = 0;
         self.end_fle = 0;
-
+        // JMX监控
         zk.registerJMX(new LeaderBean(this, zk), self.jmxLocalPeerBean);
 
         try {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
             self.tick.set(0);
+            // 加载硬盘上的数据到内存中
             zk.loadData();
 
             leaderStateSummary = new StateSummary(self.getCurrentEpoch(), zk.getLastProcessedZxid());
 
             // Start thread that waits for connection requests from
             // new followers.
+            // LeanerCnxAcceptor是一个线程，这里开启一个线程，用来监听其他follower来和当前leader进行连接的，我们看一下LeanerCnxAcceptor.run方法
             cnxAcceptor = new LearnerCnxAcceptor();
             cnxAcceptor.start();
-
+            // 获取epoch
             long epoch = getEpochToPropose(self.getId(), self.getAcceptedEpoch());
 
             zk.setZxid(ZxidUtils.makeZxid(epoch, 0));
@@ -653,13 +656,14 @@ public class Leader extends LearnerMaster {
             // We have to get at least a majority of servers in sync with
             // us. We do this by waiting for the NEWLEADER packet to get
             // acknowledged
-
+            //等待epoch ack
             waitForEpochAck(self.getId(), leaderStateSummary);
             self.setCurrentEpoch(epoch);
             self.setLeaderAddressAndId(self.getQuorumAddress(), self.getId());
             self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
 
             try {
+                // 等待new ack
                 waitForNewLeaderAck(self.getId(), zk.getZxid());
             } catch (InterruptedException e) {
                 shutdown("Waiting for a quorum of followers, only synced with sids: [ "
@@ -717,7 +721,7 @@ public class Leader extends LearnerMaster {
             boolean tickSkip = true;
             // If not null then shutdown this leader
             String shutdownMessage = null;
-
+            // 每隔tickTime / 2时间执行一次，即在tickTime时间内执行两次
             while (true) {
                 synchronized (this) {
                     long start = Time.currentElapsedTime();
@@ -743,7 +747,9 @@ public class Leader extends LearnerMaster {
                     }
 
                     syncedAckSet.addAck(self.getId());
-
+                    // getLearners()是一个set集合，里面保存了所有和leader建立连接的follower的处理连接请求的LearnerHandler
+                    // 当follower和leader创建连接之后，会创建LearnerHandler线程并启动去处理和follower的读写请求，启动LearnerHandler线程池，会把其保存到learners集合中
+                    // 将已同步的follower加入syncedAckSet
                     for (LearnerHandler f : getLearners()) {
                         if (f.synced()) {
                             syncedAckSet.addAck(f.getSid());
@@ -756,7 +762,7 @@ public class Leader extends LearnerMaster {
                         shutdownMessage = "Unexpected internal error";
                         break;
                     }
-
+                    // 同步者不过半说明集群有问题，跳出循环，继续选举
                     if (!tickSkip && !syncedAckSet.hasAllQuorums()) {
                         // Lost quorum of last committed and/or last proposed
                         // config, set shutdown flag
@@ -767,6 +773,7 @@ public class Leader extends LearnerMaster {
                     }
                     tickSkip = !tickSkip;
                 }
+                // 跟所有连上的follower或observer ping
                 for (LearnerHandler f : getLearners()) {
                     f.ping();
                 }
@@ -902,6 +909,8 @@ public class Leader extends LearnerMaster {
         // in order to be committed, a proposal must be accepted by a quorum.
         //
         // getting a quorum from all necessary configurations.
+        // 确认是否达到了可以通过的确认数量，如果没有则不提交。
+        // 如果超过了半数提交，则直接进入提交后续，当然，这会有并发控制
         if (!p.hasAllQuorums()) {
             return false;
         }
@@ -949,6 +958,8 @@ public class Leader extends LearnerMaster {
             informAndActivate(p, designatedLeader);
         } else {
             p.request.logLatency(ServerMetrics.getMetrics().QUORUM_ACK_LATENCY);
+            // 提交后，会把 lastCommitted 设置为当前 zxid
+            // 会给 各节点发送 COMMIT 信息提交
             commit(zxid);
             inform(p);
         }
@@ -998,6 +1009,7 @@ public class Leader extends LearnerMaster {
             LOG.debug("outstanding is 0");
             return;
         }
+        // 如果已提交，则 lastCommitted 会变大，从而使本次提交失效返回
         if (lastCommitted >= zxid) {
             LOG.debug(
                 "proposal has already been committed, pzxid: 0x{} zxid: 0x{}",
@@ -1074,12 +1086,14 @@ public class Leader extends LearnerMaster {
          * @see org.apache.zookeeper.server.RequestProcessor#processRequest(org.apache.zookeeper.server.Request)
          */
         public void processRequest(Request request) throws RequestProcessorException {
+            // FinalRequestProcessor, 由 FinalRequestProcessor 进行数据持久化
             next.processRequest(request);
 
             // The only requests that should be on toBeApplied are write
             // requests, for which we will have a hdr. We can't simply use
             // request.zxid here because that is set on read requests to equal
             // the zxid of the last write op.
+            // 只处理写请求，如果是写请求则header不为空
             if (request.getHdr() != null) {
                 long zxid = request.getHdr().getZxid();
                 Iterator<Proposal> iter = leader.toBeApplied.iterator();
@@ -1115,6 +1129,7 @@ public class Leader extends LearnerMaster {
     void sendPacket(QuorumPacket qp) {
         synchronized (forwardingFollowers) {
             for (LearnerHandler f : forwardingFollowers) {
+                // 添加到 LearnerHandler 的队列，就返回，可见 LearnerHandler 肯定又是一个异步任务
                 f.queuePacket(qp);
             }
         }
@@ -1226,7 +1241,7 @@ public class Leader extends LearnerMaster {
             shutdown(msg);
             throw new XidRolloverException(msg);
         }
-
+        // 封装 QuorumPacket, 进行节点间通信
         byte[] data = SerializeUtils.serializeRequest(request);
         proposalStats.setLastBufferSize(data.length);
         QuorumPacket pp = new QuorumPacket(Leader.PROPOSAL, request.zxid, data, null);
@@ -1236,6 +1251,7 @@ public class Leader extends LearnerMaster {
         p.request = request;
 
         synchronized (this) {
+            // 将自己算入投票队列
             p.addQuorumVerifier(self.getQuorumVerifier());
 
             if (request.getHdr().getType() == OpCode.reconfig) {
@@ -1250,6 +1266,7 @@ public class Leader extends LearnerMaster {
 
             lastProposed = p.packet.getZxid();
             outstandingProposals.put(lastProposed, p);
+            // 此处会将 QuorumPacket 数据包，全部发送到各个通信节点
             sendPacket(pp);
         }
         ServerMetrics.getMetrics().PROPOSAL_COUNT.add(1);
@@ -1393,13 +1410,31 @@ public class Leader extends LearnerMaster {
             if (!waitingForNewEpoch) {
                 return epoch;
             }
+            //每个follower都会进入到这里，此时会获取到当前连接进来follower发送过来的最大的epoch，然后 + 1返回作为最新的epoch
+            /**
+             * 打个比方有5台机器
+             * 第一台: epoch: 5
+             * 第二台: epoch: 5
+             * 第三台: epoch: 6
+             * 第四台: epoch: 5
+             * 第五台: epoch: 6
+             * 1、2、3台连接进来
+             * 第一台进来: 5 >= -1  epoch = 5 + 1 = 6
+             * 第二台进来: 5 >= 6  epoch 不变
+             * 第三台进来: 6 >= 6  epoch = 6 + 1 = 7
+             * 返回 7
+             * 不同的机器可能就不一样的，如果是1、2、4连接进来，超过一半，此时会返回 6
+             */
+
             if (lastAcceptedEpoch >= epoch) {
                 epoch = lastAcceptedEpoch + 1;
             }
             if (isParticipant(sid)) {
+                // 如果连接进来的是follower参与者，则保存到connectingFollowers集合中
                 connectingFollowers.add(sid);
             }
             QuorumVerifier verifier = self.getQuorumVerifier();
+            // 判断现在是否有超过一半的follower连接到leader了
             if (connectingFollowers.contains(self.getId()) && verifier.containsQuorum(connectingFollowers)) {
                 waitingForNewEpoch = false;
                 self.setAcceptedEpoch(epoch);
@@ -1412,9 +1447,11 @@ public class Leader extends LearnerMaster {
                 long cur = start;
                 long end = start + self.getInitLimit() * self.getTickTime();
                 while (waitingForNewEpoch && cur < end && !quitWaitForEpoch) {
+                    // 如果没有一半follower连接到leader，并且还有足够的时间等待follower连接进来，则wait等待
                     connectingFollowers.wait(end - cur);
                     cur = Time.currentElapsedTime();
                 }
+                // 等待超时报异常
                 if (waitingForNewEpoch) {
                     throw new InterruptedException("Timeout while waiting for epoch from quorum");
                 }
@@ -1435,11 +1472,13 @@ public class Leader extends LearnerMaster {
 
     @Override
     public void waitForEpochAck(long id, StateSummary ss) throws IOException, InterruptedException {
+        // electingFollowers 所有需要选举的follower
         synchronized (electingFollowers) {
             if (electionFinished) {
                 return;
             }
             if (ss.getCurrentEpoch() != -1) {
+                // follower比leader超前，报异常
                 if (ss.isMoreRecentThan(leaderStateSummary)) {
                     throw new IOException("Follower is ahead of the leader, leader summary: "
                                           + leaderStateSummary.getCurrentEpoch()
@@ -1447,6 +1486,7 @@ public class Leader extends LearnerMaster {
                                           + leaderStateSummary.getLastZxid()
                                           + " (last zxid)");
                 }
+                // 当前必须是参与者 follower
                 if (ss.getLastZxid() != -1 && isParticipant(id)) {
                     electingFollowers.add(id);
                 }
@@ -1459,6 +1499,7 @@ public class Leader extends LearnerMaster {
                 long start = Time.currentElapsedTime();
                 long cur = start;
                 long end = start + self.getInitLimit() * self.getTickTime();
+                // 未过半响应则等待响应
                 while (!electionFinished && cur < end) {
                     electingFollowers.wait(end - cur);
                     cur = Time.currentElapsedTime();

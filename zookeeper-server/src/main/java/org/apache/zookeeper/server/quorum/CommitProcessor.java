@@ -216,6 +216,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                 commitIsWaiting = !committedRequests.isEmpty();
                 requestsToProcess = queuedRequests.size();
                 // Avoid sync if we have something to do
+                // wait/notify 等待任务处理完成
                 if (requestsToProcess == 0 && !commitIsWaiting) {
                     // Waiting for requests to process
                     synchronized (this) {
@@ -244,11 +245,14 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                  */
                 Request request;
                 int readsProcessed = 0;
+                // 处理单批次数据，由前面取得的 requestsToProcess 决定
                 while (!stopped
                        && requestsToProcess > 0
                        && (maxReadBatchSize < 0 || readsProcessed <= maxReadBatchSize)
                        && (request = queuedRequests.poll()) != null) {
+                    // 将队列弹出后，就相当于处理了该任务
                     requestsToProcess--;
+                    // 更新类操作将会进入第一个逻辑
                     if (needCommit(request) || pendingRequests.containsKey(request.sessionId)) {
                         // Add request to pending
                         Deque<Request> requests = pendingRequests.computeIfAbsent(request.sessionId, sid -> new ArrayDeque<>());
@@ -390,6 +394,7 @@ public class CommitProcessor extends ZooKeeperCriticalThread implements RequestP
                      * Process following reads if any, remove session queue(s) if
                      * empty.
                      */
+                    // 处理读取请求，通过线程池调用CommitWorkRequest的doWork方法，直接调用下一个处理器
                     readsProcessed = 0;
                     for (Long sessionId : queuesToDrain) {
                         Deque<Request> sessionQueue = pendingRequests.get(sessionId);

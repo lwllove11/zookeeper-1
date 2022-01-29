@@ -76,16 +76,22 @@ public class ProposalRequestProcessor implements RequestProcessor {
         if (request instanceof LearnerSyncRequest) {
             zks.getLeader().processSync((LearnerSyncRequest) request);
         } else {
+            // 此处 nextProcessor 是 CommitProcessor
+            // 先交其处理，然后再判断是否需要本地化数据
             if (shouldForwardToNextProcessor(request)) {
                 nextProcessor.processRequest(request);
             }
+            // 只要是写事务， hdr 不会为空
             if (request.getHdr() != null) {
                 // We need to sync and get consensus on any transactions
+                // 投票决定是否更新数据
                 try {
+                    // 投票逻辑则由 leader 类去处理
                     zks.getLeader().propose(request);
                 } catch (XidRolloverException e) {
                     throw new RequestProcessorException(e.getMessage(), e);
                 }
+                // 交由 SyncRequestProcessor 进行数据持久化操作
                 syncProcessor.processRequest(request);
             }
         }

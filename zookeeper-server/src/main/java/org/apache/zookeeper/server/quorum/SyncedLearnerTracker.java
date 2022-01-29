@@ -52,10 +52,12 @@ public class SyncedLearnerTracker {
 
     public boolean hasAllQuorums() {
         for (QuorumVerifierAcksetPair qvAckset : qvAcksetPairs) {
+            // 此处是判断是否超过半数的请求被 ack
             if (!qvAckset.getQuorumVerifier().containsQuorum(qvAckset.getAckset())) {
                 return false;
             }
         }
+        // 如果超过半数 ack, 则进行提交动作
         return true;
     }
 

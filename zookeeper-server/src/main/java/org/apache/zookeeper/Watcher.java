@@ -33,6 +33,7 @@ public interface Watcher {
 
     /**
      * This interface defines the possible states an Event may represent
+     * 事件发生时Zookeeper的状态
      */
     @InterfaceAudience.Public
     interface Event {

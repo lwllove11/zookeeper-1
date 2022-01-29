@@ -63,16 +63,23 @@ public class LeaderZooKeeperServer extends QuorumZooKeeperServer {
 
     @Override
     protected void setupRequestProcessors() {
+        // 最后一个处理器是 FinalRequestProcessor,通常是请求处理链的最后一个处理器。
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
+        // 倒数第二个处理器是 ToBeAppliedRequestProcessor,维护toBeApplied列表，下个处理器必须是FinalRequestProcessor并且FinalRequestProcessor必须同步处理请求。
         RequestProcessor toBeAppliedProcessor = new Leader.ToBeAppliedRequestProcessor(finalProcessor, getLeader());
+        // 倒数第三个处理器是 CommitProcessor,将到来的请求与本地提交的请求进行匹配，这是因为改变系统状态的本地请求的返回结果是到来的请求。
         commitProcessor = new CommitProcessor(toBeAppliedProcessor, Long.toString(getServerId()), false, getZooKeeperServerListener());
         commitProcessor.start();
+        // 倒数第四个处理器是 ProposalRequestProcessor,将请求转发给AckRequestProcessor和SyncRequestProcessor。
         ProposalRequestProcessor proposalProcessor = new ProposalRequestProcessor(this, commitProcessor);
         proposalProcessor.initialize();
+        // 第二个处理器是 PrepRequestProcessor,通常是请求处理链的第一个处理器。
         prepRequestProcessor = new PrepRequestProcessor(this, proposalProcessor);
         prepRequestProcessor.start();
+        // 第一个处理器是 LeaderRequestProcessor
         firstProcessor = new LeaderRequestProcessor(this, prepRequestProcessor);
-
+        // 所以最终的链路是 LeaderRequestProcessor -> PrepRequestProcessor -> ProposalRequestProcessor ->
+        // CommitProcessor -> ToBeAppliedRequestProcessor -> FinalRequestProcessor
         setupContainerManager();
     }
 

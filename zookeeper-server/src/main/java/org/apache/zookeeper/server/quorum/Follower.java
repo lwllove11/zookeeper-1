@@ -84,10 +84,13 @@ public class Follower extends Learner {
 
         try {
             self.setZabState(QuorumPeer.ZabState.DISCOVERY);
+            // 查找leader
             QuorumServer leaderServer = findLeader();
             try {
+                // 向leader发起连接
                 connectToLeader(leaderServer.addr, leaderServer.hostname);
                 connectionTime = System.currentTimeMillis();
+                // 向leader进行注册, 经过三次握手
                 long newEpochZxid = registerWithLeader(Leader.FOLLOWERINFO);
                 if (self.isReconfigStateChange()) {
                     throw new Exception("learned about role change");
@@ -106,6 +109,7 @@ public class Follower extends Learner {
                 try {
                     self.setLeaderAddressAndId(leaderServer.addr, leaderServer.getId());
                     self.setZabState(QuorumPeer.ZabState.SYNCHRONIZATION);
+                    // 与 Leader 建立同步，即发起 Socket 连接
                     syncWithLeader(newEpochZxid);
                     self.setZabState(QuorumPeer.ZabState.BROADCAST);
                     completedSync = true;
@@ -113,6 +117,7 @@ public class Follower extends Learner {
                     long syncTime = Time.currentElapsedTime() - startTime;
                     ServerMetrics.getMetrics().FOLLOWER_SYNC_TIME.add(syncTime);
                 }
+                // 如果设置了 observeMasterPort() 则开启相应处理线程
                 if (self.getObserverMasterPort() > 0) {
                     LOG.info("Starting ObserverMaster");
 
@@ -122,6 +127,8 @@ public class Follower extends Learner {
                     om = null;
                 }
                 // create a reusable packet to reduce gc impact
+                // 读取leader发送过来的proposal数据，把数据写入本地日志文件，然后给leader发送ack，
+                // 紧接着就是leader等待超过半数的follower发送了ack之后，会发送commit给follower，follower再把数据写入到内存zkDataBase数据库中，这个就是典型的2PC两阶段提交,
                 QuorumPacket qp = new QuorumPacket();
                 while (this.isRunning()) {
                     readPacket(qp);

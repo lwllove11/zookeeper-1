@@ -59,6 +59,7 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
      */
     FollowerZooKeeperServer(FileTxnSnapLog logFactory, QuorumPeer self, ZKDatabase zkDb) throws IOException {
         super(logFactory, self.tickTime, self.minSessionTimeout, self.maxSessionTimeout, self.clientPortListenBacklog, zkDb, self);
+        // 使用 ConcurrentLinkedQueue 队列进行消息传递
         this.pendingSyncs = new ConcurrentLinkedQueue<Request>();
     }
 
@@ -68,11 +69,17 @@ public class FollowerZooKeeperServer extends LearnerZooKeeperServer {
 
     @Override
     protected void setupRequestProcessors() {
+        // 最后一个处理器是 FinalRequestProcessor
         RequestProcessor finalProcessor = new FinalRequestProcessor(this);
+        // 倒数第二个处理器是 CommitProcessor
         commitProcessor = new CommitProcessor(finalProcessor, Long.toString(getServerId()), true, getZooKeeperServerListener());
         commitProcessor.start();
+        // 倒数第三个处理器是 FollowerRequestProcessor,将修改了系统状态的请求转发给Leader。
+        // 所以，最终的调用链是 FollowerRequestProcessor -> CommitProcessor -> FinalRequestProcessor
         firstProcessor = new FollowerRequestProcessor(this, commitProcessor);
         ((FollowerRequestProcessor) firstProcessor).start();
+        // 另外还有一个 SyncRequestProcessor 单独启动,发送Sync请求的处理器。
+        // 写proposal事务日志
         syncProcessor = new SyncRequestProcessor(this, new SendAckRequestProcessor(getFollower()));
         syncProcessor.start();
     }
